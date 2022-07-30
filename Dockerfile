@@ -34,6 +34,7 @@ RUN \
     python3 \
     python3-xdg \
     ttf-wqy-zenhei \
+    unzip \
     wget \
     xz-utils && \
   apt-get install -y \
@@ -68,5 +69,51 @@ RUN \
     /var/lib/apt/lists/* \
     /var/tmp/*
 
-# add local files
+RUN \
+  curl -sLo \
+  "/tmp/DeDRM_tools_7.2.1.zip" \
+  "https://github.com/apprenticeharper/DeDRM_tools/releases/download/v7.2.1/DeDRM_tools_7.2.1.zip" && \
+  unzip -q "/tmp/DeDRM_tools_7.2.1.zip" && \
+  calibre-customize --add-plugin DeDRM_plugin.zip
+
+ARG SERIAL
+RUN sed -i "s/\"serials\": \[\]/\"serials\": \[\"${SERIAL}\"\]/" ~/.config/calibre/plugins/dedrm.json
+
+RUN \
+  curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -so "awscliv2.zip" && \
+  unzip -q awscliv2.zip
+
+# add config files
 COPY root/ /
+
+WORKDIR /
+RUN \
+  curl -sLo \
+    "rmapi-linuxx86-64.tar.gz" \
+    "https://github.com/juruen/rmapi/releases/download/v0.0.20/rmapi-linuxx86-64.tar.gz" && \
+  tar zxf rmapi-linuxx86-64.tar.gz && \
+  cp rmapi /usr/local/bin && \
+  mkdir -p /tmp/cache/rmapi
+
+COPY rmapi-cache-tree /tmp/cache/rmapi/.tree
+
+RUN apt-get update && \
+  apt-get install -y \
+  g++ \
+  make \
+  cmake \
+  unzip \
+  libcurl4-openssl-dev \
+  python3-pip
+
+ARG FUNCTION_DIR="/function"
+RUN mkdir -p ${FUNCTION_DIR}
+WORKDIR ${FUNCTION_DIR}
+
+COPY app/requirements.txt .
+RUN pip3 install -r requirements.txt
+
+COPY app/* .
+
+ENTRYPOINT [ "/usr/bin/python3", "-m", "awslambdaric" ]
+CMD [ "app.lambda_handler" ]
