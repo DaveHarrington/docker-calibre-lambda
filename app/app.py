@@ -2,14 +2,12 @@
 
 import os
 import json
+import shutil
+import tempfile
 import subprocess
 import urllib.parse
 
 import boto3
-
-
-s3 = boto3.client('s3')
-secrets = boto3.client('secretsmanager',region_name='us-east-2')
 
 tmp_azw3 = "/tmp/ebook.azw3"
 tmp_epub = "/tmp/ebook.epub"
@@ -20,6 +18,9 @@ rmapi_config = "/tmp/rmapi.conf"
 rmapi_cache = "/tmp/cache/"
 
 def lambda_handler(event, context):
+
+    s3 = boto3.client('s3')
+    secrets = boto3.client('secretsmanager',region_name='us-east-2')
     remark_secret = secrets.get_secret_value(
         SecretId=remark_token_id
     )
@@ -42,17 +43,22 @@ def lambda_handler(event, context):
         print('Error getting object {} from bucket {}. Make sure they exist and your bucket is in the same region as this function.'.format(key, bucket))
         raise e
 
-    convert(tmp_azw3, tmp_epub)
+    with tempfile.TemporaryDirectory() as tmphome:
+        shutil.rmtree(tmphome)
+        shutil.copytree("/function/", tmphome)
+        convert(tmp_azw3, tmp_epub, tmphome)
 
     filename, _ = os.path.splitext(key)
 
     s3.upload_file(tmp_epub, epub_bucket, filename + '.epub')
 
+    os.rename(tmp_epub, "/tmp/" + filename + '.epub')
+
     subprocess.run([
         "rmapi",
          "put",
-         tmp_epub,
-         filename + '.epub',
+         "/tmp/" + filename + '.epub',
+        "/"
     ],
         env=dict(
             os.environ,
@@ -67,18 +73,25 @@ def lambda_handler(event, context):
         'body': json.dumps(f"Converted and uploaded {filename}")
     }
 
-def convert(azw3_file, epub_out):
+def convert(azw3_file, epub_out, tmphome):
     print("Running: " + " ".join([
         "ebook-convert",
         azw3_file,
         epub_out,
     ]))
+    env = os.environ.copy()
+    env["HOME"] = tmphome
     subprocess.run([
         "ebook-convert",
         azw3_file,
         epub_out,
-    ])
+    ],
+        env=env,
+        check=True,
+    )
 
 if __name__ == "__main__":
-    send_to_remarkable()
-
+    with tempfile.TemporaryDirectory() as tmphome:
+        shutil.rmtree(tmphome)
+        shutil.copytree("/function/", tmphome)
+        convert("/function/test.azw3", "/tmp/test.epub", tmphome)

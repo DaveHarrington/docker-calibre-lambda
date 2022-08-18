@@ -9,10 +9,11 @@ LABEL maintainer="aptalca"
 
 ENV \
   CUSTOM_PORT="8080" \
-  GUIAUTOSTART="true" \
-  HOME="/config"
+  GUIAUTOSTART="false" \
+  HOME="/function"
 
 RUN \
+  set -o xtrace && \
   echo "**** install runtime packages ****" && \
   apt-get update && \
   apt-get install -y --no-install-recommends \
@@ -38,15 +39,17 @@ RUN \
     wget \
     xz-utils && \
   apt-get install -y \
-    speech-dispatcher && \
+    speech-dispatcher
+
+RUN \
   echo "**** install calibre ****" && \
-  mkdir -p \
-    /opt/calibre && \
+  mkdir -p /opt/calibre && \
   if [ -z ${CALIBRE_RELEASE+x} ]; then \
     CALIBRE_RELEASE=$(curl -sX GET "https://api.github.com/repos/kovidgoyal/calibre/releases/latest" \
     | jq -r .tag_name); \
   fi && \
   CALIBRE_VERSION="$(echo ${CALIBRE_RELEASE} | cut -c2-)" && \
+  echo CALIBRE VERSION: ${CALIBRE_VERSION} && \
   CALIBRE_URL="https://download.calibre-ebook.com/${CALIBRE_VERSION}/calibre-${CALIBRE_VERSION}-x86_64.txz" && \
   curl -o \
     /tmp/calibre-tarball.txz -L \
@@ -54,32 +57,36 @@ RUN \
   tar xvf /tmp/calibre-tarball.txz -C \
     /opt/calibre && \
   /opt/calibre/calibre_postinstall && \
-  dbus-uuidgen > /etc/machine-id && \
-  echo "**** grab websocat ****" && \
+  dbus-uuidgen > /etc/machine-id
+
+RUN \
+  echo "**** install websocat ****" && \
   WEBSOCAT_RELEASE=$(curl -sX GET "https://api.github.com/repos/vi/websocat/releases/latest" \
     | awk '/tag_name/{print $4;exit}' FS='[""]'); \
   curl -o \
     /usr/bin/websocat -fL \
     "https://github.com/vi/websocat/releases/download/${WEBSOCAT_RELEASE}/websocat.x86_64-unknown-linux-musl" && \
-  chmod +x /usr/bin/websocat && \
-  echo "**** cleanup ****" && \
-  apt-get clean && \
-  rm -rf \
-    /tmp/* \
-    /var/lib/apt/lists/* \
-    /var/tmp/*
+  chmod +x /usr/bin/websocat
 
 RUN \
+  echo "**** install dedrm tools ****" && \
   curl -sLo \
-  "/tmp/DeDRM_tools_7.2.1.zip" \
-  "https://github.com/apprenticeharper/DeDRM_tools/releases/download/v7.2.1/DeDRM_tools_7.2.1.zip" && \
-  unzip -q "/tmp/DeDRM_tools_7.2.1.zip" && \
+  "/tmp/DeDRM_tools.zip" \
+  "https://github.com/noDRM/DeDRM_tools/releases/download/v10.0.3/DeDRM_tools_10.0.3.zip" && \
+  ls -al && \
+  unzip -q "/tmp/DeDRM_tools.zip" && \
+  ls -al && \
   calibre-customize --add-plugin DeDRM_plugin.zip
 
+RUN echo "**** setup drm key ****"
+COPY dedrm.json /tmp/
 ARG SERIAL
-RUN sed -i "s/\"serials\": \[\]/\"serials\": \[\"${SERIAL}\"\]/" ~/.config/calibre/plugins/dedrm.json
+RUN \
+  sed "s/SERIAL/${SERIAL}/" /tmp/dedrm.json \
+  > ~/.config/calibre/plugins/dedrm.json
 
 RUN \
+  echo "**** install awscli ****" && \
   curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -so "awscliv2.zip" && \
   unzip -q awscliv2.zip
 
@@ -88,6 +95,7 @@ COPY root/ /
 
 WORKDIR /
 RUN \
+  echo "**** install remarkable api tools ****" && \
   curl -sLo \
     "rmapi-linuxx86-64.tar.gz" \
     "https://github.com/juruen/rmapi/releases/download/v0.0.20/rmapi-linuxx86-64.tar.gz" && \
@@ -115,5 +123,19 @@ RUN pip3 install -r requirements.txt
 
 COPY app/* .
 
+RUN \
+  echo "**** cleanup ****" && \
+  apt-get clean && \
+  rm -rf \
+    ~/.cache \
+    /tmp/* \
+    /var/lib/apt/lists/* \
+    /var/tmp/*
+
+RUN \
+  echo "**** set readable for lambda ****" && \
+  chmod -R o+rX .
+
 ENTRYPOINT [ "/usr/bin/python3", "-m", "awslambdaric" ]
 CMD [ "app.lambda_handler" ]
+# CMD [ "python3", "app.py" ]
